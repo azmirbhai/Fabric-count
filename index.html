@@ -3079,14 +3079,14 @@ html.kb-entry,html.kb-room{overflow-anchor:none}
             <div class="es-section es-green">
                 <div class="es-section-label">Add Roll</div>
                 <div class="entry-row">
-                    <input type="number" step="0.01" id="kgInp" placeholder="Weight (kg)"
-                        onkeypress="if(event.key==='Enter') addEntry()"
+                    <input type="number" step="0.01" id="kgInp" placeholder="Weight (kg)" enterkeyhint="enter"
+                        onkeydown="_kgEnter(event)" onkeypress="_kgEnter(event)"
                         oninput="updateRunningTotal()">
                     <input type="number" id="rollInp" value="1" class="roll-inp" readonly
                         ontouchstart="detectRollDT(event,this)"
                         ondblclick="toggleRollLock(this)"
                         title="Double-tap / double-click to unlock manual entry">
-                    <button class="btn btn-primary add-btn" onclick="addEntry()">Add</button>
+                    <button class="btn btn-primary add-btn" onmousedown="event.preventDefault()" onclick="addEntry()">Add</button>
                 </div>
             </div>
 
@@ -8229,7 +8229,18 @@ function updateRunningTotal() {
     rtSess.style.color = 'var(--ink)';
 }
 
+/* Enter / keyboard arrow: add the roll but never let the key move focus away or hide the keyboard (no hide + reopen flicker) */
+function _kgEnter(e) {
+    if (e.key !== 'Enter' && e.keyCode !== 13) return;
+    e.preventDefault();
+    const t = Date.now();
+    if (t - (_kgEnter.t || 0) < 250) return;      /* keydown + keypress of the same press = one roll */
+    _kgEnter.t = t;
+    addEntry();
+}
+let _wasTypingKg = false;
 function addEntry() {
+    _wasTypingKg = (document.activeElement === document.getElementById('kgInp')) || (window.visualViewport && window.innerHeight - window.visualViewport.height > 120) || document.documentElement.classList.contains('kb-entry');
     const kV = parseFloat(document.getElementById('kgInp').value);
     const rV = parseInt(document.getElementById('rollInp').value) || 1;
     if (isNaN(kV) || kV <= 0) return;
@@ -8259,6 +8270,8 @@ function commitEntry(entry) {
     }
     save(); updateUI();
     updateRunningTotal();
+    const _kg = document.getElementById('kgInp');
+    if (_kg && document.activeElement !== _kg && _wasTypingKg) _kg.focus({ preventScroll: true });   /* keep the keyboard up */
     focusWeightInput();
 }
 
