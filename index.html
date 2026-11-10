@@ -15816,6 +15816,51 @@ async function capturePage(div) {
     return html2canvas(div, { scale: 3, useCORS: true, logging: false });
 }
 
+async function saveGeneratedFile(blob, filename, mimeType) {
+    if (!(blob instanceof Blob) || !blob.size) throw new Error('The exported file is empty.');
+
+    const capacitor = window.Capacitor;
+    if (capacitor?.isNativePlatform?.()) {
+        const DownloadFile = capacitor.Plugins?.DownloadFile || capacitor.registerPlugin?.('DownloadFile');
+        if (!DownloadFile) throw new Error('Android Downloads support is unavailable. Rebuild the app after syncing Capacitor.');
+
+        const dataUri = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('Could not read the exported file.'));
+            reader.readAsDataURL(blob);
+        });
+        if (typeof dataUri !== 'string') throw new Error('Could not read the exported file.');
+        const separator = dataUri.indexOf(',');
+        if (separator < 0 || !dataUri.startsWith(`data:${mimeType}`)) {
+            throw new Error('Could not prepare the exported file for Downloads.');
+        }
+
+        await DownloadFile.save({
+            fileName: filename,
+            mimeType,
+            data: dataUri.slice(separator + 1)
+        });
+        return 'downloaded';
+    }
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return 'saved';
+}
+
+function generatedFileStatus(result, fileType) {
+    return result === 'downloaded'
+        ? `${fileType} saved to Downloads/Fabric Count`
+        : `${fileType} download started`;
+}
+
 async function canvasesToPdf(canvases, filename) {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -15824,8 +15869,10 @@ async function canvasesToPdf(canvases, filename) {
         const imgData = canvases[i].toDataURL('image/jpeg', 0.92);
         pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
     }
-    pdf.save(filename);
+    return saveGeneratedFile(pdf.output('blob'), filename, 'application/pdf');
 }
+
+function pdfSaveStatus(result) { return generatedFileStatus(result, 'PDF'); }
 
 /* ─── Printing: the browser's OWN print menu, straight from this page ───────────────────────
    The old way opened a pop-up window and printed from inside it. Mobile browsers, installed (PWA) apps and many
@@ -15896,7 +15943,15 @@ async function writePrintWindow(win, canvases, docTitle) {
             + '<button id="fcPbX" aria-label="Close" style="border:0;background:none;color:#94a3b8;font:800 16px Arial,sans-serif;padding:4px 6px">✕</button>';
         document.body.appendChild(bar);
         bar.querySelector('#fcPbPrint').onclick = doPrint;
-        bar.querySelector('#fcPbPdf').onclick = () => { try { canvasesToPdf(canvases, (docTitle || 'Delivery_Report') + '.pdf'); } catch (e) { showToast('⚠ PDF failed'); } };
+        bar.querySelector('#fcPbPdf').onclick = async () => {
+            try {
+                const result = await canvasesToPdf(canvases, (docTitle || 'Delivery_Report') + '.pdf');
+                showToast(`✓ ${pdfSaveStatus(result)}`);
+            } catch (e) {
+                console.error('PDF export error:', e);
+                showToast('⚠ PDF failed: ' + (e.message || e));
+            }
+        };
         bar.querySelector('#fcPbX').onclick = () => { if (_fcPrintCleanup) _fcPrintCleanup(); };
     };
 
@@ -16341,9 +16396,9 @@ async function startReportQueue(cardsArr, mode, printWin) {
             updatePdfOverlay('Opening print dialog…');
             await writePrintWindow(printWin, canvases, `${s.id}_${s.party}_Delivery`);
         } else {
-            updatePdfOverlay('Saving PDF…');
-            await canvasesToPdf(canvases, `${s.id}_${s.party}_Delivery.pdf`);
-            showToast('✓ Delivery Report saved');
+            updatePdfOverlay('Preparing PDF…');
+            const result = await canvasesToPdf(canvases, `${s.id}_${s.party}_Delivery.pdf`);
+            showToast(`✓ Delivery Report ${pdfSaveStatus(result).replace('PDF ', '')}`);
         }
     } catch(e) {
         console.error('PDF error:', e);
@@ -16718,10 +16773,11 @@ async function startChallanQueue() {
             }
         }
 
-        updatePdfOverlay('Saving PDF…');
-        await canvasesToPdf(canvases, `${s.id}_${s.party}_Challans.pdf`);
+        updatePdfOverlay('Preparing PDF…');
+        const pdfResult = await canvasesToPdf(canvases, `${s.id}_${s.party}_Challans.pdf`);
         const noBillSuffix = hasNoBill ? ' + No Bill page' : '';
-        showToast(`✓ ${groups.length} challan${groups.length>1?'s':''}${noBillSuffix} saved (${issuedNos[0]}${groups.length>1?' – '+issuedNos[issuedNos.length-1]:''})`);
+        const challanRange = `(${issuedNos[0]}${groups.length>1?' – '+issuedNos[issuedNos.length-1]:''})`;
+        showToast(`✓ ${groups.length} challan${groups.length>1?'s':''}${noBillSuffix} generated — ${pdfSaveStatus(pdfResult)} ${challanRange}`);
     } catch(e) {
         console.error('Challan PDF error:', e);
         showToast('⚠ Challan PDF failed: ' + (e.message || e));
@@ -17065,9 +17121,9 @@ async function reprintChallan(sessId, key) {
         const div  = buildPageDiv(html);
         await new Promise(r => setTimeout(r, 50));
         const canvas = await capturePage(div);
-        updatePdfOverlay('Saving PDF…');
-        await canvasesToPdf([canvas], `${ch.no}_${s.party}.pdf`);
-        showToast(`✓ ${ch.no} reprinted`);
+        updatePdfOverlay('Preparing PDF…');
+        const result = await canvasesToPdf([canvas], `${ch.no}_${s.party}.pdf`);
+        showToast(`✓ ${ch.no} — ${pdfSaveStatus(result)}`);
     } catch(e) {
         console.error('Reprint error:', e);
         showToast('⚠ Reprint failed: ' + (e.message || e));
@@ -17108,10 +17164,10 @@ async function reprintSelectedChallans() {
             okCount++;
         }
         if (!canvases.length) { showToast('⚠ None of the selected challans could be rendered'); return; }
-        updatePdfOverlay('Saving PDF…');
-        await canvasesToPdf(canvases, `Challans_Reprint_${okCount}.pdf`);
-        showToast(`✓ ${okCount} of ${selected.length} challan${selected.length>1?'s':''} reprinted`);
-        toggleChallanSelectMode(); // exit select mode and clear selection after a successful bulk action
+        updatePdfOverlay('Preparing PDF…');
+        const result = await canvasesToPdf(canvases, `Challans_Reprint_${okCount}.pdf`);
+        showToast(`✓ ${okCount} of ${selected.length} challan${selected.length>1?'s':''} — ${pdfSaveStatus(result)}`);
+        toggleChallanSelectMode();
     } catch(e) {
         console.error('Bulk reprint error:', e);
         showToast('⚠ Reprint failed: ' + (e.message || e));
@@ -17437,7 +17493,7 @@ async function downloadSummaryStatement() {
             await new Promise(r => setTimeout(r, 40));
             canvases.push(await capturePage(div));
         }
-        updatePdfOverlay('Saving PDF…');
+        updatePdfOverlay('Preparing PDF…');
 
         // ── Yarn summary page ────────────────────────────────────────────
         const yarnData = _buildYarnOverview(selectedSummaryProfiles);
@@ -17524,11 +17580,11 @@ async function downloadSummaryStatement() {
             canvases.push(await capturePage(yarnDiv));
         }
 
-        await canvasesToPdf(canvases, `Statement_${new Date().toISOString().slice(0,10)}.pdf`);
-        showToast('✓ Statement saved as PDF');
+        const result = await canvasesToPdf(canvases, `Statement_${new Date().toISOString().slice(0,10)}.pdf`);
+        showToast(`✓ Statement ${pdfSaveStatus(result)}`);
     } catch(e) {
         console.error(e);
-        showToast('⚠ PDF generation failed');
+        showToast('⚠ PDF generation failed: ' + (e.message || e));
     } finally {
         document.getElementById('report-stage').style.display = 'none';
         hidePdfOverlay();
@@ -17539,7 +17595,7 @@ async function downloadSummaryStatement() {
    Same selected cards as the PDF, but as a real spreadsheet with one
    column per data point (including Company), so it can be sorted,
    filtered or re-used in Excel. Built client-side with SheetJS. ──── */
-function downloadSummaryExcel() {
+async function downloadSummaryExcel() {
     if (!selectedSummaryProfiles.length) return;
     if (typeof XLSX === 'undefined') { showToast('⚠ Excel library not loaded — check your connection'); return; }
     _refreshProfileStatsCache();
@@ -17717,8 +17773,18 @@ function downloadSummaryExcel() {
     }
 
     const filename = `Summary_${new Date().toISOString().slice(0,10)}.xlsx`;
-    XLSX.writeFile(wb, filename);
-    showToast('✓ Excel file saved');
+    try {
+        const xlsx = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const result = await saveGeneratedFile(
+            new Blob([xlsx], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+            filename,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        showToast(`✓ Summary ${generatedFileStatus(result, 'Excel')}`);
+    } catch (e) {
+        console.error('Summary Excel export error:', e);
+        showToast('⚠ Excel export failed: ' + (e.message || e));
+    }
 }
 
 function navCard(dir) {
@@ -18358,7 +18424,7 @@ function resetProfFilters() {
     renderProfiles();
     showToast('↺ Filters reset');
 }
-function exportProfilesCSV() {
+async function exportProfilesCSV() {
     _refreshProfileStatsCache(); // this iterates every profile — same fix as elsewhere
     const rows = [['Card Name','Party','Buyer','Project','PO Number','Program','Target KG','Delivered KG','Balance KG','Done %']];
     profiles.forEach(p => {
@@ -18368,10 +18434,13 @@ function exportProfilesCSV() {
         rows.push([p.cardName, p.party, p.buyerName||'', p.project||'', p.poNumber||'', p.program||'', p.qty||0, del.toFixed(2), fmtBalPlain(bal), pct]);
     });
     const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
-    const blob = new Blob([csv], {type:'text/csv'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = 'profiles_export.csv'; a.click();
-    showToast('✓ Profiles exported as CSV');
+    try {
+        const result = await saveGeneratedFile(new Blob([csv], {type:'text/csv;charset=utf-8'}), 'profiles_export.csv', 'text/csv;charset=utf-8');
+        showToast(`✓ Profiles ${generatedFileStatus(result, 'CSV')}`);
+    } catch (e) {
+        console.error('Profiles CSV export error:', e);
+        showToast('⚠ CSV export failed: ' + (e.message || e));
+    }
 }
 
 /* ─── Profiles: bulk selection ──────────────────────────
@@ -18660,7 +18729,7 @@ function profBulkReopen() {
 }
 
 /* ── ⬇ CSV of just the ticked cards ── */
-function profBulkExport() {
+async function profBulkExport() {
     const sel = _bbNeedSel(); if (!sel) return;
     _refreshProfileStatsCache();
     const rows = [['Card Name', 'Party', 'Company', 'Buyer', 'Project', 'PO Number', 'Program', 'Machine', 'Fabric', 'Target KG', 'Delivered KG', 'Balance KG', 'Done %', 'Rolls', 'Status']];
@@ -18670,10 +18739,13 @@ function profBulkExport() {
             p.qty || 0, del.toFixed(2), bal.toFixed(2), p.qty > 0 ? calcPct(p.qty, del).toFixed(1) : '', _profStats(p).rolls, p.closed ? 'Closed' : (p.balSettled ? 'Settled' : 'Open')]);
     });
     const csv = '\ufeff' + rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\r\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'selected_profiles.csv'; a.click();
-    showToast('⬇ Exported ' + sel.length + ' card' + (sel.length !== 1 ? 's' : ''));
+    try {
+        const result = await saveGeneratedFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'selected_profiles.csv', 'text/csv;charset=utf-8');
+        showToast(`⬇ Exported ${sel.length} card${sel.length !== 1 ? 's' : ''} — ${generatedFileStatus(result, 'CSV')}`);
+    } catch (e) {
+        console.error('Selected profiles CSV export error:', e);
+        showToast('⚠ CSV export failed: ' + (e.message || e));
+    }
 }
 
 /* ── 🗑 Delete (tombstoned, same as the single delete) ── */
@@ -21718,7 +21790,7 @@ function _ysRenderPrograms() {
 
 
 // ── Export Yarn Ledger to Excel ───────────────────────────────────────
-function exportYarnLedgerExcel() {
+async function exportYarnLedgerExcel() {
     try {
         if (typeof XLSX === 'undefined') { showToast('⚠ XLSX library not loaded'); return; }
 
@@ -21842,8 +21914,13 @@ function exportYarnLedgerExcel() {
         XLSX.utils.book_append_sheet(wb, ws3, 'Full Ledger');
 
         const date = new Date().toISOString().slice(0,10);
-        XLSX.writeFile(wb, `Yarn_Ledger_${date}.xlsx`);
-        showToast('✓ Yarn ledger exported — 3 sheets');
+        const xlsx = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const result = await saveGeneratedFile(
+            new Blob([xlsx], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+            `Yarn_Ledger_${date}.xlsx`,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        showToast(`✓ Yarn ledger exported — 3 sheets — ${generatedFileStatus(result, 'Excel')}`);
     } catch(e) {
         showToast('⚠ Export failed: ' + e.message);
         console.error('exportYarnLedgerExcel:', e);
