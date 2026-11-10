@@ -4904,6 +4904,32 @@ const LOCAL_YARN_SESS_KEY = 'fc_v46_yarn_sessions';
 const LOCAL_MACHINE_KEY   = 'fc_v46_safe_machines';
 const LOCAL_DARK_KEY  = 'darkMode';         // matches the key the head's early-apply script reads before first paint
 
+function triggerHaptic(pattern = 30) {
+    const capacitor = window.Capacitor;
+    if (capacitor?.isNativePlatform?.()) {
+        const haptics = capacitor.Plugins?.Haptics || capacitor.registerPlugin?.('Haptics');
+        if (haptics?.vibrate) {
+            const intervals = Array.isArray(pattern) ? pattern : [pattern];
+            let delay = 0;
+            intervals.forEach((interval, index) => {
+                const duration = Math.max(0, Number(interval) || 0);
+                if (index % 2 === 0 && duration > 0) {
+                    setTimeout(() => {
+                        haptics.vibrate({ duration }).catch(error => {
+                            console.warn('Native haptic feedback failed:', error);
+                            if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(duration);
+                        });
+                    }, delay);
+                }
+                delay += duration;
+            });
+            return;
+        }
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(pattern);
+}
+
 /* ── Rolling backup keys (3 slots, rotating) ───────────────────────────
    A backup snapshot is written on every successful save() so that if
    Firebase or localStorage ever gets corrupted, the last 3 known-good
@@ -8487,7 +8513,7 @@ function commitEntry(entry) {
     const now = Date.now();
     c.entries.push({ ...entry, t: now });
     s.lastModified = now; // session-level timestamp for cross-device conflict resolution
-    if (navigator.vibrate) navigator.vibrate(30); // haptic pulse
+    triggerHaptic(30); // haptic pulse
     // Clear redo stack for this card when a new entry is committed
     redoStack = redoStack.filter(r => !(r.sessId == curSessId && r.cardId == curCardId));
     document.getElementById('kgInp').value   = '';
@@ -17947,7 +17973,7 @@ function _dragStart() {
     document.body.classList.add('dd-active');
     const hint = document.getElementById('dragHint');
     if (hint) { hint.textContent = '↔ Drag to reorder — release to drop'; hint.classList.add('show'); }
-    try { if (navigator.vibrate) navigator.vibrate(30); } catch (_) {}
+    triggerHaptic(30);
     _dragFrame();
 }
 
@@ -18540,7 +18566,7 @@ function profSelClear() { profSelIds.clear(); _profPaintSel(); }
         const id = it.dataset.pid;
         timer = setTimeout(() => {
             timer = null; fired = Date.now();
-            if (navigator.vibrate) navigator.vibrate(18);
+            triggerHaptic(18);
             profSelIds.add(id);
             toggleProfSelMode(true);
         }, 520);
@@ -22867,7 +22893,7 @@ function addNoBillRoll() {
     updateUI();
 
     showToast(`⚠ No Bill Roll added to ${cardName} · ${kg.toFixed(2)} kg`);
-    if (navigator.vibrate) navigator.vibrate(30);
+    triggerHaptic(30);
 }
 
 function removeNoBillRoll(cardId, entryIdx) {
@@ -23070,13 +23096,13 @@ function renderNoBillRolls() {
   function shut(){ md.classList.remove('open','shake'); md.classList.add('gone'); setTimeout(function(){md.classList.remove('gone');},320); yes=null; }
   md.querySelector('.ep-del-keep').onclick=shut;
   md.addEventListener('click',function(e){ if(e.target===md){ md.classList.remove('shake'); void md.offsetWidth; md.classList.add('shake'); } });
-  md.querySelector('.ep-del-go').onclick=function(){ var f=yes; shut(); if(f) f(); if(navigator.vibrate) navigator.vibrate([20,40,20]); };
+  md.querySelector('.ep-del-go').onclick=function(){ var f=yes; shut(); if(f) f(); triggerHaptic([20,40,20]); };
   function ask(o,fn){
     document.getElementById('epDelT').textContent=o.title||'Delete this roll?';
     document.getElementById('epDelP').textContent='This removes it from the card and session totals on every device. It can’t be undone.';
     document.getElementById('epDelV').textContent=o.v; document.getElementById('epDelS').textContent=o.s||'';
     yes=fn; md.classList.remove('gone','shake'); void md.offsetWidth; md.classList.add('open','shake');
-    if(navigator.vibrate) navigator.vibrate(15);
+    triggerHaptic(15);
   }
   function key(sid,e){ return ('e_'+String(sid)+'_'+e.t+'_'+Math.round((+e.w||0)*100)+'_'+(e.r||0)).replace(/[^\w-]/g,'_'); }
   function strip(arr){
@@ -23132,7 +23158,7 @@ function renderNoBillRolls() {
     for(var i=0;i<n;i++) P.push({x:R(r.left-8,r.right+8),y:R(r.top-14,r.bottom+4),vx:R(-.35,.35),vy:R(-1.1,-.25),l:0,m:R(34,58),d:Math.floor(R(0,16)),z:R(4,9),rot:R(0,6.28),vr:R(-.05,.05),c:COL[Math.floor(R(0,COL.length))]});
     if(!raf) raf=requestAnimationFrame(loop);
     if(kg){ var f=document.createElement('div'); f.className='ep-float'; f.textContent='+'+kg+' kg'; f.style.left=x+'px'; f.style.top=(y-28)+'px'; document.body.appendChild(f); setTimeout(function(){f.remove();},1400); }
-    if(navigator.vibrate) navigator.vibrate(18);
+    triggerHaptic(18);
   }
   
   function cnt(){ var s=data.find(function(x){return x.id==curSessId;}); return s?_sessionEntryCount(s):0; }
